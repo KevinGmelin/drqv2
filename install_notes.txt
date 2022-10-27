@@ -4,3 +4,4 @@ Had to fix pip git link in yml file
 Had to reinstall pytorch with pip since I got error that pytorch wasnt installed with cuda support
 Cloned metaworld and installed using pip install -e .
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/kgmelin/miniconda3/envs/drqv2/lib
+pip install wandb

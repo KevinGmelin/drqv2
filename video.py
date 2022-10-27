@@ -6,10 +6,11 @@ import cv2
 import imageio
 import numpy as np
 import torch
+import wandb
 
 
 class VideoRecorder:
-    def __init__(self, root_dir, metaworld_camera_name=None, render_size=256, fps=20):
+    def __init__(self, root_dir, metaworld_camera_name=None, render_size=256, fps=20, use_wandb=False):
         if root_dir is not None:
             self.save_dir = root_dir / "eval_video"
             self.save_dir.mkdir(exist_ok=True)
@@ -20,6 +21,7 @@ class VideoRecorder:
         self.fps = fps
         self.frames = []
         self.metaworld_camera_name = metaworld_camera_name
+        self.use_wandb = use_wandb
 
     def init(self, env, enabled=True):
         self.frames = []
@@ -42,14 +44,16 @@ class VideoRecorder:
                 frame = env.render()
             self.frames.append(frame)
 
-    def save(self, file_name):
+    def save(self, file_name, step):
         if self.enabled:
             path = self.save_dir / file_name
             imageio.mimsave(str(path), self.frames, fps=self.fps)
+            if self.use_wandb:
+                wandb.log({"eval_video": wandb.Video(str(path), fps=self.fps, format="mp4")}, step=step)
 
 
 class ReconstructionRecorder:
-    def __init__(self, root_dir, encoder, decoder, device, metaworld_camera_name=None, render_size=84, fps=20):
+    def __init__(self, root_dir, encoder, decoder, device, metaworld_camera_name=None, render_size=84, fps=20, use_wandb=False):
         if root_dir is not None:
             self.save_dir = root_dir / "eval_video"
             self.save_dir.mkdir(exist_ok=True)
@@ -62,6 +66,7 @@ class ReconstructionRecorder:
         self.fps = fps
         self.frames = []
         self.metaworld_camera_name = metaworld_camera_name
+        self.use_wandb = use_wandb
 
     def init(self, env, enabled=True):
         self.frames = []
@@ -91,10 +96,12 @@ class ReconstructionRecorder:
             frame = np.clip(frame, 0, 255).astype(np.uint8)
             self.frames.append(frame)
 
-    def save(self, file_name):
+    def save(self, file_name, step):
         if self.enabled:
             path = self.save_dir / file_name
             imageio.mimsave(str(path), self.frames, fps=self.fps)
+            if self.use_wandb:
+                wandb.log({"reconstruction_video": wandb.Video(str(path), fps=self.fps, format="mp4")}, step=step)
 
 
 class TrainVideoRecorder:

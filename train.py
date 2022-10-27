@@ -25,6 +25,9 @@ from logger import Logger
 from replay_buffer import ReplayBufferStorage, make_replay_loader
 from video import TrainVideoRecorder, VideoRecorder, ReconstructionRecorder
 
+import wandb
+from omegaconf import OmegaConf
+
 torch.backends.cudnn.benchmark = True
 
 
@@ -50,7 +53,7 @@ class Workspace:
 
     def setup(self):
         # create logger
-        self.logger = Logger(self.work_dir, use_tb=self.cfg.use_tb)
+        self.logger = Logger(self.work_dir, use_tb=self.cfg.use_tb, use_wandb=self.cfg.use_wandb)
         # create envs
         if self.cfg.task_name.split("_")[0] == "metaworld":
             self.train_env = make_metaworld(
@@ -110,7 +113,7 @@ class Workspace:
         )
 
         self.video_recorder = VideoRecorder(
-            self.work_dir if self.cfg.save_video else None, self.cfg.camera_name
+            self.work_dir if self.cfg.save_video else None, self.cfg.camera_name, use_wandb=self.cfg.use_wandb
         )
         self.train_video_recorder = TrainVideoRecorder(
             self.work_dir if self.cfg.save_train_video else None
@@ -119,11 +122,19 @@ class Workspace:
         if self.cfg.save_reconstruction_video:
             assert self.cfg.agent.use_decoder, "Attempting to save a reconstruction video, but use_decoder is set to false."
             self.recon_recorder = ReconstructionRecorder(
-                self.work_dir, self.agent.encoder, self.agent.decoder, self.agent.device, self.cfg.camera_name
+                self.work_dir, self.agent.encoder, self.agent.decoder, self.agent.device, self.cfg.camera_name, use_wandb=self.cfg.use_wandb
             )
         else:
             self.recon_recorder = ReconstructionRecorder(
                 None, None, None, None, None
+            )
+        
+        if self.cfg.use_wandb:
+            cfg_dict = OmegaConf.to_container(self.cfg, resolve=True)
+            wandb.init(
+                project=self.cfg.wandb.project_name,
+                config=cfg_dict,
+                name=self.cfg.wandb.run_name,
             )
 
     @property
@@ -164,8 +175,8 @@ class Workspace:
                 step += 1
 
             episode += 1
-            self.video_recorder.save(f"{self.global_frame}.mp4")
-            self.recon_recorder.save(f"{self.global_frame}_decoder.mp4")
+            self.video_recorder.save(f"{self.global_frame}.mp4", step=self.global_frame)
+            self.recon_recorder.save(f"{self.global_frame}_decoder.mp4", step=self.global_frame)
 
         with self.logger.log_and_dump_ctx(self.global_frame, ty="eval") as log:
             log("episode_reward", total_reward / episode)

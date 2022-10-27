@@ -46,6 +46,11 @@ agent:
   stddev_schedule: ${stddev_schedule}
   stddev_clip: 0.3
 
+use_wandb: true
+wandb:
+  project_name: "DisentangledRepresentation"
+  run_name: "default_run_name"
+
 hydra:
   run:
     dir: ./exp_local/${now:%Y.%m.%d}/${now:%H%M%S}_${hydra.job.override_dirname}
