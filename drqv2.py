@@ -50,12 +50,13 @@ class Encoder(nn.Module):
         super().__init__()
 
         assert len(obs_shape) == 3
+        self.obs_shape = obs_shape
         self.repr_dim = 32 * 35 * 35
 
-        self.convnet = nn.Sequential(nn.Conv2d(obs_shape[0], 32, 3, stride=2),
-                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1),
-                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1),
-                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1),
+        self.convnet = nn.Sequential(nn.Conv2d(obs_shape[0], 32, 3, stride=2), # 41 x 41
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1), # 39 x 39
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1), # 37 x 37
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1), # 35 x 35
                                      nn.ReLU())
 
         self.apply(utils.weight_init)
@@ -65,6 +66,30 @@ class Encoder(nn.Module):
         h = self.convnet(obs)
         h = h.view(h.shape[0], -1)
         return h
+
+class Decoder(nn.Module):
+    def __init__(self, obs_shape):
+        super().__init__()
+
+        assert len(obs_shape) == 3
+        self.obs_shape = obs_shape
+
+        self.transpose_convnet = nn.Sequential(
+                                nn.ConvTranspose2d(32, 32, 3, 1), # 37 x 37
+                                nn.ReLU(),
+                                nn.ConvTranspose2d(32, 32, 3, 1),  # 39 x 39
+                                nn.ReLU(),
+                                nn.ConvTranspose2d(32, 32, 3, 1),  # 41 x 41
+                                nn.ReLU(),
+                                nn.ConvTranspose2d(32, obs_shape[0], 3, 2, 0, 1)) # 84 x 84
+
+        self.apply(utils.weight_init)
+
+    def forward(self, x):
+        out = x.view(x.shape[0], 32, 35, 35)
+        out = self.transpose_convnet(out)
+        out = (out + 0.5) * 255.0
+        return out
 
 
 class Actor(nn.Module):
@@ -124,7 +149,9 @@ class Critic(nn.Module):
 class DrQV2Agent:
     def __init__(self, obs_shape, action_shape, device, lr, feature_dim,
                  hidden_dim, critic_target_tau, num_expl_steps,
-                 update_every_steps, stddev_schedule, stddev_clip, use_tb):
+                 update_every_steps, stddev_schedule, stddev_clip, use_tb,
+                 use_decoder=False, reconstruction_loss_coeff=0.0, 
+                 backprop_decoder_loss_to_encoder=False):
         self.device = device
         self.critic_target_tau = critic_target_tau
         self.update_every_steps = update_every_steps
@@ -132,9 +159,13 @@ class DrQV2Agent:
         self.num_expl_steps = num_expl_steps
         self.stddev_schedule = stddev_schedule
         self.stddev_clip = stddev_clip
+        self.use_decoder = use_decoder
+        self.reconstruction_loss_coeff = reconstruction_loss_coeff
+        self.backprop_decoder_loss_to_encoder = backprop_decoder_loss_to_encoder
 
         # models
         self.encoder = Encoder(obs_shape).to(device)
+        self.decoder = Decoder(obs_shape).to(device) if use_decoder else None
         self.actor = Actor(self.encoder.repr_dim, action_shape, feature_dim,
                            hidden_dim).to(device)
 
@@ -144,10 +175,22 @@ class DrQV2Agent:
                                     feature_dim, hidden_dim).to(device)
         self.critic_target.load_state_dict(self.critic.state_dict())
 
+        # Loss functions
+        self.reconstruction_loss_fn = nn.MSELoss(reduction='none') if use_decoder else None
+
         # optimizers
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=lr)
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=lr)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=lr)
+
+        if use_decoder:
+            # Scale the decoder learning rate so that it is agnostic to the reconstruction loss coefficient.
+            # This allows us to tune the reconstruction loss coefficient specifically for finding a balance 
+            # between reconstruction loss and critic loss when training the encoder
+            if self.backprop_decoder_loss_to_encoder:
+                assert self.reconstruction_loss_coeff > 0.0
+            decoder_lr = lr/self.reconstruction_loss_coeff if self.backprop_decoder_loss_to_encoder else lr
+            self.decoder_opt = torch.optim.Adam(self.decoder.parameters(), lr=decoder_lr)
 
         # data augmentation
         self.aug = RandomShiftsAug(pad=4)
@@ -158,6 +201,8 @@ class DrQV2Agent:
     def train(self, training=True):
         self.training = training
         self.encoder.train(training)
+        if self.use_decoder:
+            self.decoder.train(training)
         self.actor.train(training)
         self.critic.train(training)
 
@@ -174,43 +219,82 @@ class DrQV2Agent:
                 action.uniform_(-1.0, 1.0)
         return action.cpu().numpy()[0]
 
-    def update_critic(self, obs, action, reward, discount, next_obs, step):
+    # Critic and decoder are coupled since, in the case where backprop_decoder_loss_to_encoder is true, then
+    # both the critic and decoder losses go through the encoder
+    def update_critic_and_decoder(self, obs, encoded_obs, action, reward, discount, encoded_next_obs, step):
         metrics = dict()
 
         with torch.no_grad():
             stddev = utils.schedule(self.stddev_schedule, step)
-            dist = self.actor(next_obs, stddev)
+            dist = self.actor(encoded_next_obs, stddev)
             next_action = dist.sample(clip=self.stddev_clip)
-            target_Q1, target_Q2 = self.critic_target(next_obs, next_action)
+            target_Q1, target_Q2 = self.critic_target(encoded_next_obs, next_action)
             target_V = torch.min(target_Q1, target_Q2)
             target_Q = reward + (discount * target_V)
 
-        Q1, Q2 = self.critic(obs, action)
+        Q1, Q2 = self.critic(encoded_obs, action)
         critic_loss = F.mse_loss(Q1, target_Q) + F.mse_loss(Q2, target_Q)
+
+        if self.use_decoder and self.backprop_decoder_loss_to_encoder:
+            reconstructed_obs = self.decoder(encoded_obs)
+            obs = obs / 255.0 - 0.5
+            reconstructed_obs = torch.clamp(reconstructed_obs / 255.0 - 0.5, -0.5, 0.5)
+            reconstruction_loss = self.reconstruction_loss_fn(reconstructed_obs, obs)
+            reconstruction_loss = reconstruction_loss.reshape(obs.shape[0], -1).sum(dim=1).mean()
+
+            loss = critic_loss + reconstruction_loss * self.reconstruction_loss_coeff
+
+            self.encoder_opt.zero_grad(set_to_none=True)
+            self.decoder_opt.zero_grad(set_to_none=True)
+            self.critic_opt.zero_grad(set_to_none=True)
+            loss.backward()
+            self.critic_opt.step()
+            self.encoder_opt.step()
+            self.decoder_opt.step()
+
+        elif self.use_decoder:
+            # Detach encoder_obs so we don't backprop reconstruction loss through encoder
+            reconstructed_obs = self.decoder(encoded_obs.detach())
+            obs = obs / 255.0 - 0.5
+            reconstructed_obs = torch.clamp(reconstructed_obs / 255.0 - 0.5, -0.5, 0.5)
+            reconstruction_loss = self.reconstruction_loss_fn(reconstructed_obs, obs)
+            reconstruction_loss = reconstruction_loss.reshape(obs.shape[0], -1).sum(dim=1).mean()
+
+            self.decoder_opt.zero_grad(set_to_none=True)
+            reconstruction_loss.backward()
+            self.decoder_opt.step()
+
+            self.encoder_opt.zero_grad(set_to_none=True)
+            self.critic_opt.zero_grad(set_to_none=True)
+            critic_loss.backward()
+            self.critic_opt.step()
+            self.encoder_opt.step()
+        else:
+            self.encoder_opt.zero_grad(set_to_none=True)
+            self.critic_opt.zero_grad(set_to_none=True)
+            critic_loss.backward()
+            self.critic_opt.step()
+            self.encoder_opt.step()
 
         if self.use_tb:
             metrics['critic_target_q'] = target_Q.mean().item()
             metrics['critic_q1'] = Q1.mean().item()
             metrics['critic_q2'] = Q2.mean().item()
             metrics['critic_loss'] = critic_loss.item()
-
-        # optimize encoder and critic
-        self.encoder_opt.zero_grad(set_to_none=True)
-        self.critic_opt.zero_grad(set_to_none=True)
-        critic_loss.backward()
-        self.critic_opt.step()
-        self.encoder_opt.step()
+        
+        if self.use_decoder and self.use_tb:
+            metrics['reconstruction_loss'] = reconstruction_loss.item()
 
         return metrics
 
-    def update_actor(self, obs, step):
+    def update_actor(self, encoded_obs, step):
         metrics = dict()
 
         stddev = utils.schedule(self.stddev_schedule, step)
-        dist = self.actor(obs, stddev)
+        dist = self.actor(encoded_obs, stddev)
         action = dist.sample(clip=self.stddev_clip)
         log_prob = dist.log_prob(action).sum(-1, keepdim=True)
-        Q1, Q2 = self.critic(obs, action)
+        Q1, Q2 = self.critic(encoded_obs, action)
         Q = torch.min(Q1, Q2)
 
         actor_loss = -Q.mean()
@@ -241,19 +325,19 @@ class DrQV2Agent:
         obs = self.aug(obs.float())
         next_obs = self.aug(next_obs.float())
         # encode
-        obs = self.encoder(obs)
+        encoded_obs = self.encoder(obs)
         with torch.no_grad():
-            next_obs = self.encoder(next_obs)
+            encoded_next_obs = self.encoder(next_obs)
 
         if self.use_tb:
             metrics['batch_reward'] = reward.mean().item()
 
-        # update critic
+        # update critic and decoder
         metrics.update(
-            self.update_critic(obs, action, reward, discount, next_obs, step))
+            self.update_critic_and_decoder(obs, encoded_obs, action, reward, discount, encoded_next_obs, step))
 
         # update actor
-        metrics.update(self.update_actor(obs.detach(), step))
+        metrics.update(self.update_actor(encoded_obs.detach(), step))
 
         # update critic target
         utils.soft_update_params(self.critic, self.critic_target,

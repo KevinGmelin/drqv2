@@ -3,4 +3,4 @@ defaults:
   - metaworld
   - _self_
 
-task_name: metaworld_drawer-open-v2
+task_name: metaworld_box-close-v2

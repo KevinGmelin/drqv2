@@ -28,7 +28,7 @@ class MT1_Wrapper(dm_env.Environment):
         self.discount = discount
         self.mt1 = metaworld.MT1(env_name, seed=seed)
         self._env = self.mt1.train_classes[env_name]()
-        self.physics = Render_Wrapper(self.render)
+        self.physics = Render_Wrapper(self._env.sim.render)
         self._reset_next_step = True
         self.current_step = 0
 
@@ -79,13 +79,13 @@ class MT1_Wrapper(dm_env.Environment):
         return getattr(self._env, name)
 
 
-def make_metaworld(name, frame_stack, action_repeat, discount, seed):
+def make_metaworld(name, frame_stack, action_repeat, discount, seed, camera_name):
     env = MT1_Wrapper(env_name=name, discount=discount, seed=seed)
     pixels_key = "pixels"
     env = ActionDTypeWrapper(env, np.float32)
     env = ActionRepeatWrapper(env, action_repeat)
     env = action_scale.Wrapper(env, minimum=-1.0, maximum=+1.0)
-    render_kwargs = dict(offscreen=True, resolution=(84, 84), camera_name="corner2")
+    render_kwargs = dict(height=84, width=84, mode='offscreen', camera_name=camera_name)
     env = pixels.Wrapper(env, pixels_only=True, render_kwargs=render_kwargs)
     env = FrameStackWrapper(env, frame_stack, pixels_key)
     env = ExtendedTimeStepWrapper(env)

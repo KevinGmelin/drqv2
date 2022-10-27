@@ -23,7 +23,7 @@ from metaworld_dm_env import make_metaworld
 import utils
 from logger import Logger
 from replay_buffer import ReplayBufferStorage, make_replay_loader
-from video import TrainVideoRecorder, VideoRecorder
+from video import TrainVideoRecorder, VideoRecorder, ReconstructionRecorder
 
 torch.backends.cudnn.benchmark = True
 
@@ -44,11 +44,6 @@ class Workspace:
         self.device = torch.device(cfg.device)
         self.setup()
 
-        self.agent = make_agent(
-            self.train_env.observation_spec(),
-            self.train_env.action_spec(),
-            self.cfg.agent,
-        )
         self.timer = utils.Timer()
         self._global_step = 0
         self._global_episode = 0
@@ -64,6 +59,7 @@ class Workspace:
                 self.cfg.action_repeat,
                 self.cfg.discount,
                 self.cfg.seed,
+                self.cfg.camera_name
             )
             self.eval_env = make_metaworld(
                 self.cfg.task_name.split("_")[1],
@@ -71,6 +67,7 @@ class Workspace:
                 self.cfg.action_repeat,
                 self.cfg.discount,
                 self.cfg.seed,
+                self.cfg.camera_name
             )
         else:
             self.train_env = dmc.make(
@@ -106,12 +103,28 @@ class Workspace:
         )
         self._replay_iter = None
 
+        self.agent = make_agent(
+            self.train_env.observation_spec(),
+            self.train_env.action_spec(),
+            self.cfg.agent,
+        )
+
         self.video_recorder = VideoRecorder(
-            self.work_dir if self.cfg.save_video else None
+            self.work_dir if self.cfg.save_video else None, self.cfg.camera_name
         )
         self.train_video_recorder = TrainVideoRecorder(
             self.work_dir if self.cfg.save_train_video else None
         )
+
+        if self.cfg.save_reconstruction_video:
+            assert self.cfg.agent.use_decoder, "Attempting to save a reconstruction video, but use_decoder is set to false."
+            self.recon_recorder = ReconstructionRecorder(
+                self.work_dir, self.agent.encoder, self.agent.decoder, self.agent.device, self.cfg.camera_name
+            )
+        else:
+            self.recon_recorder = ReconstructionRecorder(
+                None, None, None, None, None
+            )
 
     @property
     def global_step(self):
@@ -138,6 +151,7 @@ class Workspace:
         while eval_until_episode(episode):
             time_step = self.eval_env.reset()
             self.video_recorder.init(self.eval_env, enabled=(episode == 0))
+            self.recon_recorder.init(self.eval_env, enabled=(episode == 0))
             while not time_step.last():
                 with torch.no_grad(), utils.eval_mode(self.agent):
                     action = self.agent.act(
@@ -145,11 +159,13 @@ class Workspace:
                     )
                 time_step = self.eval_env.step(action)
                 self.video_recorder.record(self.eval_env)
+                self.recon_recorder.record(self.eval_env)
                 total_reward += time_step.reward
                 step += 1
 
             episode += 1
             self.video_recorder.save(f"{self.global_frame}.mp4")
+            self.recon_recorder.save(f"{self.global_frame}_decoder.mp4")
 
         with self.logger.log_and_dump_ctx(self.global_frame, ty="eval") as log:
             log("episode_reward", total_reward / episode)
