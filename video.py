@@ -10,7 +10,14 @@ import wandb
 
 
 class VideoRecorder:
-    def __init__(self, root_dir, metaworld_camera_name=None, render_size=256, fps=20, use_wandb=False):
+    def __init__(
+        self,
+        root_dir,
+        metaworld_camera_name=None,
+        render_size=256,
+        fps=20,
+        use_wandb=False,
+    ):
         if root_dir is not None:
             self.save_dir = root_dir / "eval_video"
             self.save_dir.mkdir(exist_ok=True)
@@ -32,8 +39,9 @@ class VideoRecorder:
         if self.enabled:
             if hasattr(env, "mt1"):
                 frame = env.physics.render(
-                    height=self.render_size, width=self.render_size,
-                    mode='offscreen',
+                    height=self.render_size,
+                    width=self.render_size,
+                    mode="offscreen",
                     camera_name=self.metaworld_camera_name,
                 )
             elif hasattr(env, "physics"):
@@ -49,11 +57,24 @@ class VideoRecorder:
             path = self.save_dir / file_name
             imageio.mimsave(str(path), self.frames, fps=self.fps)
             if self.use_wandb:
-                wandb.log({"eval_video": wandb.Video(str(path), fps=self.fps, format="mp4")}, step=step)
+                wandb.log(
+                    {"eval_video": wandb.Video(str(path), fps=self.fps, format="mp4")},
+                    step=step,
+                )
 
 
 class ReconstructionRecorder:
-    def __init__(self, root_dir, encoder, decoder, device, metaworld_camera_name=None, render_size=84, fps=20, use_wandb=False):
+    def __init__(
+        self,
+        root_dir,
+        encoder,
+        decoder,
+        device,
+        metaworld_camera_name=None,
+        render_size=84,
+        fps=20,
+        use_wandb=False,
+    ):
         if root_dir is not None:
             self.save_dir = root_dir / "eval_video"
             self.save_dir.mkdir(exist_ok=True)
@@ -77,8 +98,9 @@ class ReconstructionRecorder:
         if self.enabled:
             if hasattr(env, "mt1"):
                 frame = env.physics.render(
-                    height=self.render_size, width=self.render_size,
-                    mode='offscreen',
+                    height=self.render_size,
+                    width=self.render_size,
+                    mode="offscreen",
                     camera_name=self.metaworld_camera_name,
                 )
             elif hasattr(env, "physics"):
@@ -87,12 +109,14 @@ class ReconstructionRecorder:
                 )
             else:
                 frame = env.render()
-            
+
             # Encoder takes a stack of frames - duplicate the current frame for the purpose of this recording
-            frame = np.tile(frame, self.encoder.obs_shape[0]//frame.shape[2])
+            frame = np.tile(frame, self.encoder.obs_shape[0] // frame.shape[2])
             frame = torch.FloatTensor(np.transpose(frame, (2, 0, 1))).to(self.device)
-            frame = self.decoder(self.encoder(frame.unsqueeze(0))).detach().cpu().numpy()
-            frame = np.transpose(frame[0, 0:3, :, :], (1,2,0))
+            frame = (
+                self.decoder(self.encoder(frame.unsqueeze(0))).detach().cpu().numpy()
+            )
+            frame = np.transpose(frame[0, 0:3, :, :], (1, 2, 0))
             frame = np.clip(frame, 0, 255).astype(np.uint8)
             self.frames.append(frame)
 
@@ -101,7 +125,14 @@ class ReconstructionRecorder:
             path = self.save_dir / file_name
             imageio.mimsave(str(path), self.frames, fps=self.fps)
             if self.use_wandb:
-                wandb.log({"reconstruction_video": wandb.Video(str(path), fps=self.fps, format="mp4")}, step=step)
+                wandb.log(
+                    {
+                        "reconstruction_video": wandb.Video(
+                            str(path), fps=self.fps, format="mp4"
+                        )
+                    },
+                    step=step,
+                )
 
 
 class TrainVideoRecorder:

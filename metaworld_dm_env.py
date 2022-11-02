@@ -85,7 +85,7 @@ def make_metaworld(name, frame_stack, action_repeat, discount, seed, camera_name
     env = ActionDTypeWrapper(env, np.float32)
     env = ActionRepeatWrapper(env, action_repeat)
     env = action_scale.Wrapper(env, minimum=-1.0, maximum=+1.0)
-    render_kwargs = dict(height=84, width=84, mode='offscreen', camera_name=camera_name)
+    render_kwargs = dict(height=84, width=84, mode="offscreen", camera_name=camera_name)
     env = pixels.Wrapper(env, pixels_only=True, render_kwargs=render_kwargs)
     env = FrameStackWrapper(env, frame_stack, pixels_key)
     env = ExtendedTimeStepWrapper(env)
