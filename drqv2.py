@@ -51,13 +51,21 @@ class Encoder(nn.Module):
 
         assert len(obs_shape) == 3
         self.obs_shape = obs_shape
-        self.repr_dim = 256*3*3
+        self.repr_dim = 32 * 35 * 35
 
-        self.convnet = nn.Sequential(nn.Conv2d(obs_shape[0], 32, 4, stride=2), # 32 x 41 x 41
-                                     nn.ReLU(), nn.Conv2d(32, 64, 4, stride=2), # 64 x 19 x 19
-                                     nn.ReLU(), nn.Conv2d(64, 128, 4, stride=2), # 128 x 8 x 8
-                                     nn.ReLU(), nn.Conv2d(128, 256, 4, stride=2), # 256 x 3 x 3
+        self.convnet = nn.Sequential(nn.Conv2d(obs_shape[0], 32, 3, stride=2), # 41 x 41
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1), # 39 x 39
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1), # 37 x 37
+                                     nn.ReLU(), nn.Conv2d(32, 32, 3, stride=1), # 35 x 35
                                      nn.ReLU())
+
+        # self.repr_dim = 256*3*3
+
+        # self.convnet = nn.Sequential(nn.Conv2d(obs_shape[0], 32, 4, stride=2), # 32 x 41 x 41
+        #                              nn.ReLU(), nn.Conv2d(32, 64, 4, stride=2), # 64 x 19 x 19
+        #                              nn.ReLU(), nn.Conv2d(64, 128, 4, stride=2), # 128 x 8 x 8
+        #                              nn.ReLU(), nn.Conv2d(128, 256, 4, stride=2), # 256 x 3 x 3
+        #                              nn.ReLU())
 
         self.apply(utils.weight_init)
 
@@ -75,18 +83,27 @@ class Decoder(nn.Module):
         self.obs_shape = obs_shape
 
         self.transpose_convnet = nn.Sequential(
-                                nn.ConvTranspose2d(256, 128, 4, 2), # 8 x 8
+                                nn.ConvTranspose2d(32, 32, 3, 1), # 37 x 37
                                 nn.ReLU(),
-                                nn.ConvTranspose2d(128, 64, 4, 2, 0, 1),  # 19 x 19
+                                nn.ConvTranspose2d(32, 32, 3, 1),  # 39 x 39
                                 nn.ReLU(),
-                                nn.ConvTranspose2d(64, 32, 4, 2, 0, 1),  # 41 x 41
+                                nn.ConvTranspose2d(32, 32, 3, 1),  # 41 x 41
                                 nn.ReLU(),
-                                nn.ConvTranspose2d(32, obs_shape[0], 4, 2)) # 84 x 84
+                                nn.ConvTranspose2d(32, obs_shape[0], 3, 2, 0, 1)) # 84 x 84
+        # self.transpose_convnet = nn.Sequential(
+        #                         nn.ConvTranspose2d(256, 128, 4, 2), # 8 x 8
+        #                         nn.ReLU(),
+        #                         nn.ConvTranspose2d(128, 64, 4, 2, 0, 1),  # 19 x 19
+        #                         nn.ReLU(),
+        #                         nn.ConvTranspose2d(64, 32, 4, 2, 0, 1),  # 41 x 41
+        #                         nn.ReLU(),
+        #                         nn.ConvTranspose2d(32, obs_shape[0], 4, 2)) # 84 x 84
 
         self.apply(utils.weight_init)
 
     def forward(self, x):
-        out = x.view(x.shape[0], 256, 3, 3)
+        out = x.view(x.shape[0], 32, 35, 35)
+        # out = x.view(x.shape[0], 256, 3, 3)
         out = self.transpose_convnet(out)
         out = (out + 0.5) * 255.0
         return out
