@@ -252,6 +252,7 @@ class DrQV2Agent:
         self.critic.train(training)
 
     def act(self, obs, step, eval_mode):
+        obs = obs["pixels"]
         obs = torch.as_tensor(obs, device=self.device)
         obs = self.encoder(obs.unsqueeze(0))
         stddev = utils.schedule(self.stddev_schedule, step)
@@ -369,7 +370,11 @@ class DrQV2Agent:
             return metrics
 
         batch = next(replay_iter)
-        obs, action, reward, discount, next_obs = utils.to_torch(batch, self.device)
+        obs, action, reward, discount, next_obs = batch
+        obs = obs["pixels"]
+        obs, action, reward, discount, next_obs = utils.to_torch(
+            (obs, action, reward, discount, next_obs), self.device
+        )
 
         # augment
         obs = self.aug(obs.float())

@@ -30,6 +30,7 @@ experiment: exp
 # agent
 lr: 1e-4
 feature_dim: 50
+using_metaworld: false
 
 agent:
   _target_: drqv2.DrQV2Agent

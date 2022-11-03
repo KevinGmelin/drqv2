@@ -27,12 +27,16 @@ from video import TrainVideoRecorder, VideoRecorder, ReconstructionRecorder
 
 import wandb
 from omegaconf import OmegaConf
+from collections import OrderedDict
 
 torch.backends.cudnn.benchmark = True
 
 
 def make_agent(obs_spec, action_spec, cfg):
-    cfg.obs_shape = obs_spec.shape
+    assert (
+        "pixels" in obs_spec
+    ), "Observation spec passed to make_agent must contain a observation named 'pixels'"
+    cfg.obs_shape = obs_spec["pixels"].shape
     cfg.action_shape = action_spec.shape
     return hydra.utils.instantiate(cfg)
 
@@ -57,7 +61,7 @@ class Workspace:
             self.work_dir, use_tb=self.cfg.use_tb, use_wandb=self.cfg.use_wandb
         )
         # create envs
-        if self.cfg.task_name.split("_")[0] == "metaworld":
+        if self.cfg.using_metaworld:
             self.train_env = make_metaworld(
                 self.cfg.task_name.split("_")[1],
                 self.cfg.frame_stack,
@@ -65,6 +69,7 @@ class Workspace:
                 self.cfg.discount,
                 self.cfg.seed,
                 self.cfg.camera_name,
+                add_segmentation_to_obs=False,
             )
             self.eval_env = make_metaworld(
                 self.cfg.task_name.split("_")[1],
@@ -73,6 +78,13 @@ class Workspace:
                 self.cfg.discount,
                 self.cfg.seed,
                 self.cfg.camera_name,
+                add_segmentation_to_obs=False,
+            )
+            reward_spec = OrderedDict(
+                [
+                    ("reward", specs.Array((1,), np.float32, "reward")),
+                    ("success", specs.Array((1,), np.int16, "reward")),
+                ]
             )
         else:
             self.train_env = dmc.make(
@@ -87,15 +99,16 @@ class Workspace:
                 self.cfg.action_repeat,
                 self.cfg.seed,
             )
-        # create replay buffer
-        data_specs = (
+            reward_spec = specs.Array((1,), np.float32, "reward")
+
+        discount_spec = specs.Array((1,), np.float32, "discount")
+        self.replay_storage = ReplayBufferStorage(
             self.train_env.observation_spec(),
             self.train_env.action_spec(),
-            specs.Array((1,), np.float32, "reward"),
-            specs.Array((1,), np.float32, "discount"),
+            reward_spec,
+            discount_spec,
+            self.work_dir / "buffer",
         )
-
-        self.replay_storage = ReplayBufferStorage(data_specs, self.work_dir / "buffer")
 
         self.replay_loader = make_replay_loader(
             self.work_dir / "buffer",
@@ -166,13 +179,21 @@ class Workspace:
 
     def eval(self):
         step, episode, total_reward = 0, 0, 0
+        if self.cfg.using_metaworld:
+            mean_max_success, mean_mean_success, mean_last_success = 0, 0, 0
         eval_until_episode = utils.Until(self.cfg.num_eval_episodes)
 
         while eval_until_episode(episode):
+            if self.cfg.using_metaworld:
+                current_episode_max_success = 0
+                current_episode_mean_success = 0
+                current_episode_last_success = 0
+            current_episode_step = 0
             time_step = self.eval_env.reset()
             self.video_recorder.init(self.eval_env, enabled=(episode == 0))
             self.recon_recorder.init(self.eval_env, enabled=(episode == 0))
             while not time_step.last():
+                current_episode_step += 1
                 with torch.no_grad(), utils.eval_mode(self.agent):
                     action = self.agent.act(
                         time_step.observation, self.global_step, eval_mode=True
@@ -180,9 +201,20 @@ class Workspace:
                 time_step = self.eval_env.step(action)
                 self.video_recorder.record(self.eval_env)
                 self.recon_recorder.record(self.eval_env)
-                total_reward += time_step.reward
+                if self.cfg.using_metaworld:
+                    total_reward += time_step.reward["reward"]
+                    success = int(time_step.reward["success"])
+                    current_episode_max_success = max(
+                        current_episode_max_success, success
+                    )
+                    current_episode_last_success = success
+                    current_episode_mean_success += success
+                else:
+                    total_reward += time_step.reward
                 step += 1
-
+            mean_max_success += current_episode_max_success
+            mean_last_success += current_episode_last_success
+            mean_mean_success += current_episode_mean_success / current_episode_step
             episode += 1
             self.video_recorder.save(f"{self.global_frame}.mp4", step=self.global_frame)
             self.recon_recorder.save(
@@ -194,6 +226,10 @@ class Workspace:
             log("episode_length", step * self.cfg.action_repeat / episode)
             log("episode", self.global_episode)
             log("step", self.global_step)
+            if self.cfg.using_metaworld:
+                log("max_success", mean_max_success / episode)
+                log("last_success", mean_last_success / episode)
+                log("mean_success", mean_mean_success / episode)
 
     def train(self):
         # predicates
@@ -206,6 +242,10 @@ class Workspace:
         )
 
         episode_step, episode_reward = 0, 0
+        if self.cfg.using_metaworld:
+            mean_success = 0
+            max_success = 0
+            last_success = 0
         time_step = self.train_env.reset()
         self.replay_storage.add(time_step)
         self.train_video_recorder.init(time_step.observation)
@@ -229,6 +269,10 @@ class Workspace:
                         log("episode", self.global_episode)
                         log("buffer_size", len(self.replay_storage))
                         log("step", self.global_step)
+                        if self.cfg.using_metaworld:
+                            log("mean_success", mean_success / episode_step)
+                            log("max_success", max_success)
+                            log("last_success", last_success)
 
                 # reset env
                 time_step = self.train_env.reset()
@@ -239,6 +283,10 @@ class Workspace:
                     self.save_snapshot()
                 episode_step = 0
                 episode_reward = 0
+                if self.cfg.using_metaworld:
+                    mean_success = 0
+                    max_success = 0
+                    last_success = 0
 
             # try to evaluate
             if eval_every_step(self.global_step):
@@ -260,7 +308,14 @@ class Workspace:
 
             # take env step
             time_step = self.train_env.step(action)
-            episode_reward += time_step.reward
+            if self.cfg.using_metaworld:
+                episode_reward += time_step.reward["reward"]
+                success = int(time_step.reward["success"])
+                max_success = max(max_success, success)
+                last_success = success
+                mean_success += success
+            else:
+                episode_reward += time_step.reward
             self.replay_storage.add(time_step)
             self.train_video_recorder.record(time_step.observation)
             episode_step += 1
