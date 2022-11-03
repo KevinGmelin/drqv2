@@ -150,7 +150,7 @@ class Logger(object):
 
     def _try_wandb_log(self, key, value, step):
         if self.use_wandb:
-            wandb.log({key: value}, step=step, commit=False)
+            wandb.log({key: value}, step=step)
 
     def log(self, key, value, step):
         assert key.startswith("train") or key.startswith("eval")
@@ -170,8 +170,6 @@ class Logger(object):
             self._eval_mg.dump(step, "eval")
         if ty is None or ty == "train":
             self._train_mg.dump(step, "train")
-        if self.use_wandb:
-            wandb.log({}, step=step, commit=True)
 
     def log_and_dump_ctx(self, step, ty):
         return LogAndDumpCtx(self, step, ty)
