@@ -34,29 +34,46 @@ def load_episode(fn):
         return episode
 
 
-def get_spec_value(spec_name, spec, lookup):
-    value = lookup[spec_name]
-    if isinstance(spec, dict):
-        return {
-            sub_spec_name: get_spec_value(sub_spec_name, sub_spec, value)
-            for sub_spec_name, sub_spec in spec.items()
-        }
-    elif np.isscalar(value):
-        value = np.full(spec.shape, value, spec.dtype)
-    assert spec.shape == value.shape and spec.dtype == value.dtype, print(
-        spec.shape, value.shape, spec.dtype, value.dtype, spec, value
-    )
+def get_nested_value_from_flattened_key(nested_dict, flattened_key, key_delimeter):
+    value = nested_dict
+    for key in flattened_key.split(key_delimeter):
+        value = value[key]
     return value
 
 
+def flatten_nested_dict(nested_dict, key_delimiter):
+    flattened_dict = dict()
+    for key, value in nested_dict.items():
+        assert (
+            key_delimiter not in key
+        ), f"Error flattening nested dictionary. The key delimiter '{key_delimiter}' was found in key '{key}'. "
+        if isinstance(value, dict):
+            for sub_key, sub_value in flatten_nested_dict(value, key_delimiter).items():
+                flattened_dict[str(key) + str(key_delimiter) + str(sub_key)] = sub_value
+        else:
+            flattened_dict[str(key)] = value
+    return flattened_dict
+
+def get_
+
+
+def unflatten_dict(flattened_dict, key_delimiter):
+    nested_dict = dict()
+    for key, value in flattened_dict.items():
+        sub_keys = key.split(key_delimiter)
+        d = nested_dict
+        for sub_key in sub_keys[0:-1]:
+            if sub_key not in d:
+                d[sub_key] = dict()
+            d = d[sub_key]
+        d[sub_keys[-1]] = value
+    return nested_dict
+
+
 class ReplayBufferStorage:
-    def __init__(self, obs_spec, action_spec, reward_spec, discount_spec, replay_dir):
-        self._data_specs = {
-            "observation": obs_spec,
-            "action": action_spec,
-            "reward": reward_spec,
-            "discount": discount_spec,
-        }
+    def __init__(self, data_specs, replay_dir):
+        self._nesting_delimiter = "."
+        self._data_specs = flatten_nested_dict(data_specs, self._nesting_delimiter)
         self._replay_dir = replay_dir
         replay_dir.mkdir(exist_ok=True)
         self._current_episode = defaultdict(list)
@@ -67,13 +84,18 @@ class ReplayBufferStorage:
 
     def add(self, time_step):
         for spec_name, spec in self._data_specs.items():
-            value = get_spec_value(spec_name, spec, time_step)
+            value = get_nested_value_from_flattened_key(
+                time_step, spec_name, self._nesting_delimiter
+            )
+            if np.isscalar(value):
+                value = np.full(spec.shape, value, spec.dtype)
+            assert spec.shape == value.shape and spec.dtype == value.dtype
             self._current_episode[spec_name].append(value)
         if time_step.last():
             episode = dict()
-            for spec in self._data_specs:
-                value = self._current_episode[spec.name]
-                episode[spec.name] = np.array(value, spec.dtype)
+            for spec_name, spec in self._data_specs.items():
+                value = self._current_episode[spec_name]
+                episode[spec_name] = np.array(value, spec.dtype)
             self._current_episode = defaultdict(list)
             self._store_episode(episode)
 
@@ -106,6 +128,7 @@ class ReplayBuffer(IterableDataset):
         fetch_every,
         save_snapshot,
     ):
+        self._nesting_delimiter = "."
         self._replay_dir = replay_dir
         self._size = 0
         self._max_size = max_size
@@ -135,7 +158,7 @@ class ReplayBuffer(IterableDataset):
             early_eps_fn.unlink(missing_ok=True)
         self._episode_fns.append(eps_fn)
         self._episode_fns.sort()
-        self._episodes[eps_fn] = episode
+        self._episodes[eps_fn] = unflatten_dict(episode, self._nesting_delimiter)
         self._size += eps_len
 
         if not self._save_snapshot:
@@ -173,13 +196,13 @@ class ReplayBuffer(IterableDataset):
         episode = self._sample_episode()
         # add +1 for the first dummy transition
         idx = np.random.randint(0, episode_len(episode) - self._nstep + 1) + 1
-        obs = episode["observation"][idx - 1]
+        obs = episode["observation.pixels"][idx - 1]
         action = episode["action"][idx]
-        next_obs = episode["observation"][idx + self._nstep - 1]
-        reward = np.zeros_like(episode["reward"][idx])
+        next_obs = episode["observation.pixels"][idx + self._nstep - 1]
+        reward = np.zeros_like(episode["reward.reward"][idx])
         discount = np.ones_like(episode["discount"][idx])
         for i in range(self._nstep):
-            step_reward = episode["reward"][idx + i]
+            step_reward = episode["reward.reward"][idx + i]
             reward += discount * step_reward
             discount *= episode["discount"][idx + i] * self._discount
         return (obs, action, reward, discount, next_obs)

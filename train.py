@@ -102,13 +102,13 @@ class Workspace:
             reward_spec = specs.Array((1,), np.float32, "reward")
 
         discount_spec = specs.Array((1,), np.float32, "discount")
-        self.replay_storage = ReplayBufferStorage(
-            self.train_env.observation_spec(),
-            self.train_env.action_spec(),
-            reward_spec,
-            discount_spec,
-            self.work_dir / "buffer",
-        )
+        data_specs = {
+            "observation": self.train_env.observation_spec(),
+            "action": self.train_env.action_spec(),
+            "reward": reward_spec,
+            "discount": discount_spec,
+        }
+        self.replay_storage = ReplayBufferStorage(data_specs, self.work_dir / "buffer")
 
         self.replay_loader = make_replay_loader(
             self.work_dir / "buffer",
