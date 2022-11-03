@@ -4,3 +4,4 @@ agent:
   use_decoder: true
   reconstruction_loss_coeff: 0.0 # Controls balance between critic and decoder on encoder gradient updates
   backprop_decoder_loss_to_encoder: false
+  decoder_lr: 1e-4

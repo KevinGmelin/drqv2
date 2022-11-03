@@ -191,6 +191,7 @@ class DrQV2Agent:
         use_decoder=False,
         reconstruction_loss_coeff=0.0,
         backprop_decoder_loss_to_encoder=False,
+        decoder_lr=None,
     ):
         self.device = device
         self.critic_target_tau = critic_target_tau
@@ -229,16 +230,9 @@ class DrQV2Agent:
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
         if use_decoder:
-            # Scale the decoder learning rate so that it is agnostic to the reconstruction loss coefficient.
-            # This allows us to tune the reconstruction loss coefficient specifically for finding a balance
-            # between reconstruction loss and critic loss when training the encoder
-            if self.backprop_decoder_loss_to_encoder:
-                assert self.reconstruction_loss_coeff > 0.0
-            decoder_lr = (
-                lr / self.reconstruction_loss_coeff
-                if self.backprop_decoder_loss_to_encoder
-                else lr
-            )
+            assert (
+                decoder_lr is not None
+            ), "Decoder lr must be set if use_decoder is true"
             self.decoder_opt = torch.optim.Adam(
                 self.decoder.parameters(), lr=decoder_lr
             )
