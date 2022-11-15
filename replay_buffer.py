@@ -54,8 +54,6 @@ def flatten_nested_dict(nested_dict, key_delimiter):
             flattened_dict[str(key)] = value
     return flattened_dict
 
-def get_
-
 
 def unflatten_dict(flattened_dict, key_delimiter):
     nested_dict = dict()
@@ -68,6 +66,16 @@ def unflatten_dict(flattened_dict, key_delimiter):
             d = d[sub_key]
         d[sub_keys[-1]] = value
     return nested_dict
+
+
+def get_timestep_from_nested_dict(nested_dict, time_step):
+    result = dict()
+    for key, value in nested_dict.items():
+        if isinstance(value, dict):
+            result[str(key)] = get_timestep_from_nested_dict(value, time_step)
+        else:
+            result[str(key)] = value[time_step]
+    return result
 
 
 class ReplayBufferStorage:
@@ -158,7 +166,7 @@ class ReplayBuffer(IterableDataset):
             early_eps_fn.unlink(missing_ok=True)
         self._episode_fns.append(eps_fn)
         self._episode_fns.sort()
-        self._episodes[eps_fn] = unflatten_dict(episode, self._nesting_delimiter)
+        self._episodes[eps_fn] = episode
         self._size += eps_len
 
         if not self._save_snapshot:
@@ -196,13 +204,16 @@ class ReplayBuffer(IterableDataset):
         episode = self._sample_episode()
         # add +1 for the first dummy transition
         idx = np.random.randint(0, episode_len(episode) - self._nstep + 1) + 1
-        obs = episode["observation.pixels"][idx - 1]
+        episode = unflatten_dict(episode, self._nesting_delimiter)
+        obs = get_timestep_from_nested_dict(episode["observation"], idx - 1)
         action = episode["action"][idx]
-        next_obs = episode["observation.pixels"][idx + self._nstep - 1]
-        reward = np.zeros_like(episode["reward.reward"][idx])
+        next_obs = get_timestep_from_nested_dict(
+            episode["observation"], idx + self._nstep - 1
+        )
+        reward = np.zeros_like(episode["reward"]["reward"][idx])
         discount = np.ones_like(episode["discount"][idx])
         for i in range(self._nstep):
-            step_reward = episode["reward.reward"][idx + i]
+            step_reward = episode["reward"]["reward"][idx + i]
             reward += discount * step_reward
             discount *= episode["discount"][idx + i] * self._discount
         return (obs, action, reward, discount, next_obs)

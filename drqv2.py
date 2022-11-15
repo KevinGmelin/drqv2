@@ -372,6 +372,7 @@ class DrQV2Agent:
         batch = next(replay_iter)
         obs, action, reward, discount, next_obs = batch
         obs = obs["pixels"]
+        next_obs = next_obs["pixels"]
         obs, action, reward, discount, next_obs = utils.to_torch(
             (obs, action, reward, discount, next_obs), self.device
         )
