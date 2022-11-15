@@ -6,7 +6,7 @@ import datetime
 import io
 import random
 import traceback
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 
 import numpy as np
 import torch

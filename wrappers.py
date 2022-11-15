@@ -87,6 +87,7 @@ class FrameStackWrapper(dm_env.Environment):
             assert key in wrapped_obs_spec
 
             frame_shape = wrapped_obs_spec[key].shape
+            frame_dtype = wrapped_obs_spec[key].dtype
             # remove batch dim
             if len(frame_shape) == 4:
                 frame_shape = frame_shape[1:]
@@ -94,7 +95,7 @@ class FrameStackWrapper(dm_env.Environment):
                 shape=np.concatenate(
                     [[frame_shape[2] * num_frames], frame_shape[:2]], axis=0
                 ),
-                dtype=np.uint8,
+                dtype=frame_dtype,
                 minimum=0,
                 maximum=255,
                 name="observation",
