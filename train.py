@@ -139,7 +139,7 @@ class Workspace:
 
         if self.cfg.save_reconstruction_video:
             assert (
-                self.cfg.agent.use_decoder
+                self.cfg.agent.use_decoder or self.cfg.agent.disentangled_version == 1
             ), "Attempting to save a reconstruction video, but use_decoder is set to false."
             use_first_half_latent = self.cfg.agent.disentangled_version == 1
             self.recon_recorder = ReconstructionRecorder(
@@ -162,12 +162,16 @@ class Workspace:
 
         if self.cfg.save_reconstructed_mask_video:
             assert (
-                self.cfg.agent.disentangled_version == 1
-            ), "Saving reconstructed mask video currently only supported for disentangled version 1"
+                self.cfg.agent.disentangled_version > 0
+            ), "Saving reconstructed mask video currently only supported for disentangled version > 0"
+            if self.cfg.agent.disentangled_version == 1:
+                mask_decoder = self.agent.mask_decoder
+            else:
+                mask_decoder = self.agent.robot_mask_decoder
             self.recon_mask_recorder = ReconstructedMaskRecorder(
                 self.work_dir,
                 self.agent.encoder,
-                self.agent.mask_decoder,
+                mask_decoder,
                 self.agent.device,
                 self.cfg.camera_name,
                 use_wandb=self.cfg.use_wandb,

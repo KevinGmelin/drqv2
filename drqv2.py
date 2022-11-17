@@ -218,6 +218,13 @@ class DrQV2Agent:
                 in_channels=16, out_channels=obs_shape[0] // 3, output_act=nn.Sigmoid()
             ).to(device)
             self.decoder = Decoder(in_channels=16, out_channels=obs_shape[0]).to(device)
+        elif disentangled_version == 2:
+            self.robot_mask_decoder = Decoder(
+                in_channels=16, out_channels=obs_shape[0] // 3, output_act=nn.Sigmoid()
+            ).to(device)
+            self.non_robot_mask_decoder = Decoder(
+                in_channels=16, out_channels=obs_shape[0] // 3, output_act=nn.Sigmoid()
+            ).to(device)
         elif use_decoder:
             self.decoder = Decoder(in_channels=32, out_channels=obs_shape[0]).to(device)
 
@@ -237,6 +244,9 @@ class DrQV2Agent:
         if disentangled_version == 1:
             self.reconstruction_loss_fn = nn.MSELoss(reduction="none")
             self.mask_loss_fn = nn.BCELoss(reduction="none")
+        elif disentangled_version == 2:
+            self.non_robot_mask_loss_fn = nn.BCELoss(reduction="none")
+            self.robot_mask_loss_fn = nn.BCELoss(reduction="none")
         elif use_decoder:
             self.reconstruction_loss_fn = nn.MSELoss(reduction="none")
 
@@ -254,6 +264,14 @@ class DrQV2Agent:
                 self.decoder.parameters(), lr=decoder_lr
             )
             self.mask_opt = torch.optim.Adam(self.mask_decoder.parameters(), lr=mask_lr)
+        elif disentangled_version == 2:
+            assert mask_lr is not None, "Mask lr must be set for disentangled version 2"
+            self.robot_mask_opt = torch.optim.Adam(
+                self.robot_mask_decoder.parameters(), lr=mask_lr
+            )
+            self.non_robot_mask_opt = torch.optim.Adam(
+                self.non_robot_mask_decoder.parameters(), lr=mask_lr
+            )
         elif use_decoder:
             assert (
                 decoder_lr is not None
@@ -274,6 +292,9 @@ class DrQV2Agent:
         if self.disentangled_version == 1:
             self.decoder.train(training)
             self.mask_decoder.train(training)
+        elif self.disentangled_version == 2:
+            self.robot_mask_decoder.train(training)
+            self.non_robot_mask_decoder.train(training)
         elif self.use_decoder:
             self.decoder.train(training)
         self.actor.train(training)
@@ -350,6 +371,41 @@ class DrQV2Agent:
             self.encoder_opt.step()
             self.decoder_opt.step()
             self.mask_opt.step()
+        elif self.disentangled_version == 2:
+            f1 = encoded_obs[:, : int(encoded_obs.shape[1] / 2)]
+            f2 = encoded_obs[:, int(encoded_obs.shape[1] / 2) :]
+            reconstructed_non_robot_mask = self.non_robot_mask_decoder(f1)
+            reconstructed_robot_mask = self.robot_mask_decoder(f2)
+
+            robot_mask_loss = self.robot_mask_loss_fn(
+                reconstructed_robot_mask, robot_masks
+            )
+            robot_mask_loss = (
+                robot_mask_loss.reshape(robot_masks.shape[0], -1).sum(dim=1).mean()
+            )
+
+            non_robot_mask_loss = self.non_robot_mask_loss_fn(
+                reconstructed_non_robot_mask, 1 - robot_masks
+            )
+            non_robot_mask_loss = (
+                non_robot_mask_loss.reshape(robot_masks.shape[0], -1).sum(dim=1).mean()
+            )
+
+            loss = (
+                critic_loss
+                + non_robot_mask_loss * self.mask_loss_coef
+                + robot_mask_loss * self.mask_loss_coef
+            )
+
+            self.encoder_opt.zero_grad(set_to_none=True)
+            self.critic_opt.zero_grad(set_to_none=True)
+            self.robot_mask_opt.zero_grad(set_to_none=True)
+            self.non_robot_mask_opt.zero_grad(set_to_none=True)
+            loss.backward()
+            self.critic_opt.step()
+            self.encoder_opt.step()
+            self.robot_mask_opt.step()
+            self.non_robot_mask_opt.step()
         elif self.use_decoder and self.backprop_decoder_loss_to_encoder:
             reconstructed_obs = self.decoder(encoded_obs)
             obs = obs / 255.0 - 0.5
@@ -403,6 +459,9 @@ class DrQV2Agent:
         if self.disentangled_version == 1 and self.use_tb:
             metrics["reconstruction_loss"] = reconstruction_loss.item()
             metrics["mask_loss"] = mask_loss.item()
+        elif self.disentangled_version == 2 and self.use_tb:
+            metrics["non_robot_mask_loss"] = non_robot_mask_loss.item()
+            metrics["robot_mask_loss"] = robot_mask_loss.item()
         elif self.use_decoder and self.use_tb:
             metrics["reconstruction_loss"] = reconstruction_loss.item()
 
@@ -446,7 +505,7 @@ class DrQV2Agent:
             (rgb_obs, action, reward, discount, next_rgb_obs), self.device
         )
 
-        if self.disentangled_version == 1:
+        if self.disentangled_version > 0:
             masks = obs["segmentation"]
             (masks,) = utils.to_torch((masks,), self.device)
         else:
