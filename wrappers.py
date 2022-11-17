@@ -5,6 +5,8 @@ import dm_env
 import numpy as np
 from dm_env import StepType, specs
 
+from utils import segmentation_to_robot_mask
+
 
 class ExtendedTimeStep(NamedTuple):
     step_type: Any
@@ -204,6 +206,56 @@ class ExtendedTimeStepWrapper(dm_env.Environment):
 
     def observation_spec(self):
         return self._env.observation_spec()
+
+    def action_spec(self):
+        return self._env.action_spec()
+
+    def __getattr__(self, name):
+        return getattr(self._env, name)
+
+
+class SegmentationToRobotMaskWrapper(dm_env.Environment):
+    def __init__(self, env, segmentation_key="segmentation"):
+        self._env = env
+        self.segmentation_key = segmentation_key
+        assert segmentation_key in env.observation_spec()
+
+        wrapped_obs_spec = env.observation_spec()
+        frame_shape = wrapped_obs_spec[segmentation_key].shape
+        frame_dtype = wrapped_obs_spec[segmentation_key].dtype
+        # remove batch dim
+        if len(frame_shape) == 4:
+            frame_shape = frame_shape[1:]
+        wrapped_obs_spec[segmentation_key] = specs.BoundedArray(
+            shape=np.concatenate([frame_shape[:2], [1]], axis=0),
+            dtype=frame_dtype,
+            minimum=0,
+            maximum=255,
+            name="observation",
+        )
+        self._obs_spec = wrapped_obs_spec
+
+    def _transform_observation(self, time_step):
+        obs = time_step.observation
+        seg = obs[self.segmentation_key]
+
+        robot_mask = segmentation_to_robot_mask(seg)
+        robot_mask = robot_mask.astype(seg.dtype)
+        robot_mask = robot_mask.reshape(robot_mask.shape[0], robot_mask.shape[1], 1)
+
+        obs[self.segmentation_key] = robot_mask
+        return time_step._replace(observation=obs)
+
+    def reset(self):
+        time_step = self._env.reset()
+        return self._transform_observation(time_step)
+
+    def step(self, action):
+        time_step = self._env.step(action)
+        return self._transform_observation(time_step)
+
+    def observation_spec(self):
+        return self._obs_spec
 
     def action_spec(self):
         return self._env.action_spec()

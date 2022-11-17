@@ -24,6 +24,7 @@ import utils
 from logger import Logger
 from replay_buffer import ReplayBufferStorage, make_replay_loader
 from video import TrainVideoRecorder, VideoRecorder, ReconstructionRecorder
+from video import MaskRecorder, ReconstructedMaskRecorder
 
 import wandb
 from omegaconf import OmegaConf
@@ -69,7 +70,7 @@ class Workspace:
                 self.cfg.discount,
                 self.cfg.seed,
                 self.cfg.camera_name,
-                add_segmentation_to_obs=False,
+                add_segmentation_to_obs=(self.cfg.agent.disentangled_version > 0),
             )
             self.eval_env = make_metaworld(
                 self.cfg.task_name.split("_")[1],
@@ -78,7 +79,7 @@ class Workspace:
                 self.cfg.discount,
                 self.cfg.seed,
                 self.cfg.camera_name,
-                add_segmentation_to_obs=False,
+                add_segmentation_to_obs=(self.cfg.agent.disentangled_version > 0),
             )
             reward_spec = OrderedDict(
                 [
@@ -140,6 +141,7 @@ class Workspace:
             assert (
                 self.cfg.agent.use_decoder
             ), "Attempting to save a reconstruction video, but use_decoder is set to false."
+            use_first_half_latent = self.cfg.agent.disentangled_version == 1
             self.recon_recorder = ReconstructionRecorder(
                 self.work_dir,
                 self.agent.encoder,
@@ -147,9 +149,34 @@ class Workspace:
                 self.agent.device,
                 self.cfg.camera_name,
                 use_wandb=self.cfg.use_wandb,
+                use_first_half_latent=use_first_half_latent,
             )
         else:
             self.recon_recorder = ReconstructionRecorder(None, None, None, None, None)
+
+        self.mask_recorder = MaskRecorder(
+            self.work_dir if self.cfg.save_mask_video else None,
+            metaworld_camera_name=self.cfg.camera_name,
+            use_wandb=self.cfg.use_wandb,
+        )
+
+        if self.cfg.save_reconstructed_mask_video:
+            assert (
+                self.cfg.agent.disentangled_version == 1
+            ), "Saving reconstructed mask video currently only supported for disentangled version 1"
+            self.recon_mask_recorder = ReconstructedMaskRecorder(
+                self.work_dir,
+                self.agent.encoder,
+                self.agent.mask_decoder,
+                self.agent.device,
+                self.cfg.camera_name,
+                use_wandb=self.cfg.use_wandb,
+                use_second_half_latent=True,
+            )
+        else:
+            self.recon_mask_recorder = ReconstructedMaskRecorder(
+                None, None, None, None, None
+            )
 
         if self.cfg.use_wandb:
             cfg_dict = OmegaConf.to_container(self.cfg, resolve=True)
@@ -192,6 +219,8 @@ class Workspace:
             time_step = self.eval_env.reset()
             self.video_recorder.init(self.eval_env, enabled=(episode == 0))
             self.recon_recorder.init(self.eval_env, enabled=(episode == 0))
+            self.mask_recorder.init(self.eval_env, enabled=(episode == 0))
+            self.recon_mask_recorder.init(self.eval_env, enabled=(episode == 0))
             while not time_step.last():
                 current_episode_step += 1
                 with torch.no_grad(), utils.eval_mode(self.agent):
@@ -201,6 +230,8 @@ class Workspace:
                 time_step = self.eval_env.step(action)
                 self.video_recorder.record(self.eval_env)
                 self.recon_recorder.record(self.eval_env)
+                self.mask_recorder.record(self.eval_env)
+                self.recon_mask_recorder.record(self.eval_env)
                 if self.cfg.using_metaworld:
                     total_reward += time_step.reward["reward"]
                     success = int(time_step.reward["success"])
@@ -219,6 +250,12 @@ class Workspace:
             self.video_recorder.save(f"{self.global_frame}.mp4", step=self.global_frame)
             self.recon_recorder.save(
                 f"{self.global_frame}_decoder.mp4", step=self.global_frame
+            )
+            self.mask_recorder.save(
+                f"{self.global_frame}_mask.mp4", step=self.global_frame
+            )
+            self.recon_mask_recorder.save(
+                f"{self.global_frame}_mask_decoder.mp4", step=self.global_frame
             )
 
         with self.logger.log_and_dump_ctx(self.global_frame, ty="eval") as log:

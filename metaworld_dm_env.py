@@ -9,6 +9,7 @@ from wrappers import (
     ActionRepeatWrapper,
     FrameStackWrapper,
     ExtendedTimeStepWrapper,
+    SegmentationToRobotMaskWrapper,
 )
 import random
 import gym
@@ -152,6 +153,7 @@ def make_metaworld(
             render_kwargs=segmentation_kwargs,
             observation_key=segmentation_key,
         )
+        env = SegmentationToRobotMaskWrapper(env, segmentation_key)
 
     env = FrameStackWrapper(env, frame_stack, frame_keys)
     env = ExtendedTimeStepWrapper(env, using_metaworld=True)

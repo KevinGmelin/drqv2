@@ -1,8 +1,13 @@
 camera_name: "corner"
 save_reconstruction_video: true
+save_mask_video: true
+save_reconstructed_mask_video: true
 agent:
   use_decoder: true
-  reconstruction_loss_coeff: 0.0 # Controls balance between critic and decoder on encoder gradient updates
-  backprop_decoder_loss_to_encoder: false
+  reconstruction_loss_coeff: 0.001 # Controls balance between critic and decoder on encoder gradient updates
+  backprop_decoder_loss_to_encoder: true
   decoder_lr: 1e-4
+  disentangled_version: 1 # Overides use_decoder if set to 1
+  mask_lr: 1e-4
+  mask_loss_coeff: 0.001
 using_metaworld: true

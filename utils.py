@@ -144,3 +144,27 @@ def schedule(schdl, step):
                 mix = np.clip((step - duration1) / duration2, 0.0, 1.0)
                 return (1.0 - mix) * final1 + mix * final2
     raise NotImplementedError(schdl)
+
+
+def segmentation_to_robot_mask(seg):
+    seg = seg[:, :, 1]
+    robot_mask = np.any(
+        [
+            seg == 11,
+            seg == 13,
+            seg == 15,
+            seg == 18,
+            seg == 19,
+            seg == 21,
+            seg == 22,
+            seg == 24,
+            seg == 25,
+            seg == 27,
+            seg == 28,
+            seg == 29,
+            seg == 31,
+            seg == 33,
+        ],
+        axis=0,
+    )
+    return robot_mask
