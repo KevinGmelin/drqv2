@@ -1,13 +1,18 @@
+defaults:
+  - _self_
+  - disentangled_V3
+
 camera_name: "corner"
+using_metaworld: true
+
 save_reconstruction_video: false
-save_mask_video: true
-save_reconstructed_mask_video: true
+save_mask_video: false
+save_reconstructed_mask_video: false
 agent:
   use_decoder: false
-  reconstruction_loss_coeff: 0.001 # Controls balance between critic and decoder on encoder gradient updates
-  backprop_decoder_loss_to_encoder: true
+  reconstruction_loss_coeff: 0 # Controls balance between critic and decoder on encoder gradient updates
+  backprop_decoder_loss_to_encoder: false
   decoder_lr: 1e-4
-  disentangled_version: 2 # Overides use_decoder if set to 1
+  disentangled_version: -1 # Overides use_decoder if set to 1, 2, or 3
   mask_lr: 1e-4
-  mask_loss_coeff: 0.0000025
-using_metaworld: true
+  mask_loss_coeff: 0

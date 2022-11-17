@@ -213,7 +213,7 @@ class DrQV2Agent:
 
         # models
         self.encoder = Encoder(obs_shape).to(device)
-        if disentangled_version == 1:
+        if disentangled_version == 1 or disentangled_version == 3:
             self.mask_decoder = Decoder(
                 in_channels=16, out_channels=obs_shape[0] // 3, output_act=nn.Sigmoid()
             ).to(device)
@@ -241,7 +241,7 @@ class DrQV2Agent:
         self.critic_target.load_state_dict(self.critic.state_dict())
 
         # Loss functions
-        if disentangled_version == 1:
+        if disentangled_version == 1 or disentangled_version == 3:
             self.reconstruction_loss_fn = nn.MSELoss(reduction="none")
             self.mask_loss_fn = nn.BCELoss(reduction="none")
         elif disentangled_version == 2:
@@ -255,11 +255,13 @@ class DrQV2Agent:
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=lr)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
-        if disentangled_version == 1:
+        if disentangled_version == 1 or disentangled_version == 3:
             assert (
                 decoder_lr is not None
-            ), "Decoder lr must be set for disentangled version 1"
-            assert mask_lr is not None, "Mask lr must be set for disentangled version 1"
+            ), "Decoder lr must be set for disentangled versions 1 and 3"
+            assert (
+                mask_lr is not None
+            ), "Mask lr must be set for disentangled versions 1 and 3"
             self.decoder_opt = torch.optim.Adam(
                 self.decoder.parameters(), lr=decoder_lr
             )
@@ -289,7 +291,7 @@ class DrQV2Agent:
     def train(self, training=True):
         self.training = training
         self.encoder.train(training)
-        if self.disentangled_version == 1:
+        if self.disentangled_version == 1 or self.disentangled_version == 3:
             self.decoder.train(training)
             self.mask_decoder.train(training)
         elif self.disentangled_version == 2:
@@ -340,7 +342,7 @@ class DrQV2Agent:
         Q1, Q2 = self.critic(encoded_obs, action)
         critic_loss = F.mse_loss(Q1, target_Q) + F.mse_loss(Q2, target_Q)
 
-        if self.disentangled_version == 1:
+        if self.disentangled_version == 1 or self.disentangled_version == 3:
             f1 = encoded_obs[:, : int(encoded_obs.shape[1] / 2)]
             f2 = encoded_obs[:, int(encoded_obs.shape[1] / 2) :]
             reconstructed_obs = self.decoder(f1)
@@ -348,7 +350,14 @@ class DrQV2Agent:
 
             obs = obs / 255.0 - 0.5
             reconstructed_obs = torch.clamp(reconstructed_obs / 255.0 - 0.5, -0.5, 0.5)
+
             reconstruction_loss = self.reconstruction_loss_fn(reconstructed_obs, obs)
+            if self.disentangled_version == 3:
+                reconstruction_loss = torch.where(
+                    torch.repeat_interleave(robot_masks, 3, dim=1) > 0,
+                    0,
+                    reconstruction_loss,
+                )
             reconstruction_loss = (
                 reconstruction_loss.reshape(obs.shape[0], -1).sum(dim=1).mean()
             )
@@ -456,7 +465,9 @@ class DrQV2Agent:
             metrics["critic_q2"] = Q2.mean().item()
             metrics["critic_loss"] = critic_loss.item()
 
-        if self.disentangled_version == 1 and self.use_tb:
+        if (
+            self.disentangled_version == 1 or self.disentangled_version == 3
+        ) and self.use_tb:
             metrics["reconstruction_loss"] = reconstruction_loss.item()
             metrics["mask_loss"] = mask_loss.item()
         elif self.disentangled_version == 2 and self.use_tb:
