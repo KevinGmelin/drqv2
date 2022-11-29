@@ -190,6 +190,23 @@ class Workspace:
                 None, None, None, None, None
             )
 
+        if self.cfg.agent.disentangled_version == 2 and self.cfg.save_non_robot_mask_video:
+            mask_decoder = self.agent.non_robot_mask_decoder
+            self.recon_non_robot_mask_recorder = ReconstructedMaskRecorder(
+                self.work_dir,
+                self.agent.encoder,
+                mask_decoder,
+                self.agent.device,
+                self.cfg.camera_name,
+                use_wandb=self.cfg.use_wandb,
+                use_first_half_latent=True,
+                wandb_name="reconstruction_non_robot_mask_video"
+            )
+        else:
+            self.recon_non_robot_mask_recorder = ReconstructedMaskRecorder(
+                None, None, None, None, None
+            )
+
         if self.cfg.use_wandb:
             cfg_dict = OmegaConf.to_container(self.cfg, resolve=True)
             wandb.init(
@@ -233,6 +250,7 @@ class Workspace:
             self.recon_recorder.init(self.eval_env, enabled=(episode == 0))
             self.mask_recorder.init(self.eval_env, enabled=(episode == 0))
             self.recon_mask_recorder.init(self.eval_env, enabled=(episode == 0))
+            self.recon_non_robot_mask_recorder.init(self.eval_env, enabled=(episode == 0))
             while not time_step.last():
                 current_episode_step += 1
                 with torch.no_grad(), utils.eval_mode(self.agent):
@@ -244,6 +262,7 @@ class Workspace:
                 self.recon_recorder.record(self.eval_env)
                 self.mask_recorder.record(self.eval_env)
                 self.recon_mask_recorder.record(self.eval_env)
+                self.recon_non_robot_mask_recorder.record(self.eval_env)
                 if self.cfg.using_metaworld:
                     total_reward += time_step.reward["reward"]
                     success = int(time_step.reward["success"])
@@ -268,6 +287,9 @@ class Workspace:
             )
             self.recon_mask_recorder.save(
                 f"{self.global_frame}_mask_decoder.mp4", step=self.global_frame
+            )
+            self.recon_non_robot_mask_recorder.save(
+                f"{self.global_frame}_non_robot_mask_decoder.mp4", step=self.global_frame
             )
 
         with self.logger.log_and_dump_ctx(self.global_frame, ty="eval") as log:

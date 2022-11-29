@@ -214,6 +214,7 @@ class ReconstructedMaskRecorder:
         use_wandb=False,
         use_first_half_latent=False,
         use_second_half_latent=False,
+        wandb_name="reconstruction_mask_video"
     ):
         if root_dir is not None:
             self.save_dir = root_dir / "eval_video"
@@ -230,6 +231,7 @@ class ReconstructedMaskRecorder:
         self.use_wandb = use_wandb
         self.use_first_half_latent = use_first_half_latent
         self.use_second_half_latent = use_second_half_latent
+        self.wandb_name = wandb_name
 
     def init(self, env, enabled=True):
         self.frames = []
@@ -274,7 +276,7 @@ class ReconstructedMaskRecorder:
             if self.use_wandb:
                 wandb.log(
                     {
-                        "reconstruction_mask_video": wandb.Video(
+                        self.wandb_name: wandb.Video(
                             str(path), fps=self.fps, format="mp4"
                         )
                     },

@@ -1,6 +1,7 @@
-save_reconstruction_video: true
+save_reconstruction_video: false
 save_mask_video: true
 save_reconstructed_mask_video: true
+save_non_robot_mask_video: true
 agent:
   use_decoder: false
   reconstruction_loss_coeff: 0.0 # Controls balance between critic and decoder on encoder gradient updates
